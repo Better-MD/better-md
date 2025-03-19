@@ -3,32 +3,31 @@ from ..html import CustomHTML
 from ..markdown import CustomMarkdown
 from ..rst import CustomRst
 
-class HTML(CustomHTML):
-    def to_html(self, inner, symbol, parent, **kwargs):
-        # Collect all input attributes
-        attrs = []
-        for prop in Input.props:
-            value = symbol.get_prop(prop)
-            if value:
-                # Handle boolean attributes like 'required', 'disabled', etc.
-                if isinstance(value, bool) and value:
-                    attrs.append(prop)
-                else:
-                    attrs.append(f'{prop}="{value}"')
-        
-        attrs_str = " ".join(attrs)
-        return f"<input {attrs_str} />"
-
 class MD(CustomMarkdown):
-    def to_md(self, inner, symbol, parent, **kwargs):
+    def to_md(self, inner, symbol, parent):
+        """
+        Converts an input symbol into its Markdown representation.
+        
+        If the symbol's "type" property is "checkbox", returns a Markdown formatted checkbox
+        (with an "x" if checked or a space if unchecked) followed by the inner content's Markdown.
+        Otherwise, returns the symbol's HTML representation.
+        """
         if symbol.get_prop("type") == "checkbox":
-            return f"- [{'x' if symbol.get_prop('checked', '') else ''}] {inner.to_md()}"
+            return f"- [{'x' if symbol.get_prop('checked', '') else ' '}] {inner.to_md()}"
         return symbol.to_html()
 
 class RST(CustomRst):
-    def to_rst(self, inner, symbol, parent, **kwargs):
+    def to_rst(self, inner, symbol, parent):
+        """
+        Generate an RST formatted string for a checkbox input element.
+        
+        If the symbol's "type" property is "checkbox", returns a string displaying a checkbox
+        indicator ("x" if the "checked" property is truthy, otherwise a blank space), optionally
+        followed by the inner element’s RST representation. For other input types, returns an
+        empty string.
+        """
         if symbol.get_prop("type") == "checkbox":
-            return f"[ ] {inner.to_rst() if inner else ''}"
+            return f"[{'x' if symbol.get_prop('checked', '') else ' '}] {inner.to_rst() if inner else ''}"
         return ""  # Most input types don't have RST equivalents
 
 class Input(Symbol):
@@ -50,6 +49,6 @@ class Input(Symbol):
         "multiple",
         "step"
     ]
-    html = HTML()
+    html = "input"
     md = MD()
     rst = RST()

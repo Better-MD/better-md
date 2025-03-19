@@ -1,393 +1,287 @@
-from .symbol import Symbol, List
+from .symbol import Symbol
 from ..markdown import CustomMarkdown
 from ..rst import CustomRst
 from .h import H1, H2, H3, H4, H5, H6
 from .text import Text
-import logging
-import typing as t
+import itertools as it
 
-if t.TYPE_CHECKING:
-    # Wont be imported at runtime
-    import pandas as pd # If not installed, will not affedt anything at runtime
-
-logger = logging.getLogger("BetterMD")
-
-class TrMD(CustomMarkdown['Tr']):
-    def to_md(self, inner, symbol, parent, pretty=True, **kwargs):
-        logger.debug("Converting Tr element to Markdown")
-        contents = "\n".join([e.to_md() for e in inner])
-        split_content = contents.splitlines()
-        logger.debug(f"Split content: {split_content}")
-        ret = f"| {" | ".join(split_content)} |"
-        return ret
-
-
-class THeadMD(CustomMarkdown['THead']):
-    def to_md(self, inner, symbol, parent, pretty=True, **kwargs):
-        md = []
-        for child in symbol.head.children:
-            e = child.to_md()
-
-            md.append({"len":len(e), "style":child.styles.get("text-align", "justify")})
-
-        def parse_md(data: 'dict') -> 'str':
-            start = " :" if data["style"] in ["left", "center"] else " "
-            middle = "-"*(data["len"]-2) if data["style"] == "center" else "-"*(data["len"]-1) if data["style"] in ["left", "right"] else "-"*(data["len"])
-            end = ": " if data["style"] in ["right", "center"] else " "
-
-            return f"{start}{middle}{end}"
-
-        return f"{inner[0].to_md()}\n|{"|".join([parse_md(item) for item in md])}|"
+class TableMD(CustomMarkdown):
+    def to_md(self, inner, symbol, parent):
+        """
+        Generate Markdown for a table element.
         
-class TBodyMD(CustomMarkdown['TBody']):
-    def to_md(self, inner, symbol, parent, pretty=True, **kwargs):
-        content = [e.to_md() for e in inner if isinstance(e, Tr)]
-        logger.debug(f"TBody conent: {content}")
-        return "\n".join(content)
-
-class TdMD(CustomMarkdown['Td']):
-    def to_md(self, inner, symbol, parent, pretty=True, **kwargs):
-        if not pretty:
-            return " ".join([e.to_md() for e in inner])
+        Iterates over the provided inner elements to construct the table's Markdown output.
+        Processes a THead element to generate the header and collects non-empty Markdown
+        from each TBody element as table rows. The header and rows are concatenated with
+        newline separators to form the final Markdown string.
         
-        length = len(max(symbol.table.cols[symbol.header], key=len).data)
-        logger.debug(f"Td length: {len(symbol)}")
-        logger.debug(f"Column length: {length}")
-        return " ".join([e.to_md() for e in inner]).center(length)
-
-class ThMD(CustomMarkdown['Th']):
-    def to_md(self, inner, symbol, parent, pretty=True, **kwargs):
-        if not pretty:
-            return " ".join([e.to_md() for e in inner])
+        Returns:
+            str: The complete Markdown representation of the table.
+        """
+        result = []
+        thead_content = ""
+        tbody_rows = []
         
-        width = len(max(symbol.table.cols[symbol.header], key=len).data)
-
+        # Process inner elements
+        for section in inner:
+            if isinstance(section, THead):
+                thead_content = section.to_md()
+            elif isinstance(section, TBody):
+                tbody_content = section.to_md()
+                if tbody_content:
+                    tbody_rows.append(tbody_content)
         
-        if symbol.data == "":
-            return "".center(width)
+        # Combine all parts
+        if thead_content:
+            result.append(thead_content)
         
-        return f"**{" ".join([e.to_md() for e in inner]).center(width)}**"
-    
-class TableMD(CustomMarkdown['Table']):
-    def to_md(self, inner, symbol, parent, pretty=True, **kwargs):
-        logger.debug("Converting Table element to Markdown")
-        head = symbol.head.to_md() if symbol.head else None
-        body = symbol.body.to_md()
+        if tbody_rows:
+            result.append("\n".join(tbody_rows))
+        
+        return "\n".join(result)
+   
+class TableRST(CustomRst):
+    def to_rst(self, inner, symbol, parent):
+        """
+        Converts table sections into a reStructuredText formatted table.
+        
+        This method processes a list of table sections (typically header and body) to generate an RST table. It first
+        iterates over the sections to compute the maximum width for each column by examining each cell’s content. In a
+        second pass, it builds a table string with consistent column widths, using a distinct separator (with '=' characters)
+        after header rows and '-' characters for body rows. If no valid rows are found, an empty string is returned.
+        
+        Args:
+            inner: A list of table section symbols (e.g., THead and TBody) that contain the table rows.
+        
+        Returns:
+            str: The formatted reStructuredText table.
+        """
+        if not inner:
+            return ""
+        
+        # First pass: collect all cell widths from both thead and tbody
+        col_widths = []
+        all_rows = []
+        
+        for section in inner:
+            if isinstance(section, THead) or isinstance(section, TBody):
+                for row in section.children:
+                    cells = [cell.to_rst() for cell in row.children]
+                    all_rows.append((cells, isinstance(section, THead)))
+                    
+                    # Update column widths
+                    if not col_widths:
+                        col_widths = [len(cell) for cell in cells]
+                    else:
+                        col_widths = [max(old, len(new)) for old, new in zip(col_widths, cells + [''] * (len(col_widths) - len(cells)))]
+        
+        if not all_rows:
+            return ""
+        
+        # Second pass: generate RST with consistent widths
+        result = []
+        
+        # Top border
+        top_border = "+" + "+".join(["-" * (width + 2) for width in col_widths]) + "+"
+        result.append(top_border)
+        
+        for i, (cells, is_header) in enumerate(all_rows):
+            # Create row with proper spacing using consistent column widths
+            row = "| " + " | ".join(cell.ljust(width) for cell, width in zip(cells, col_widths)) + " |"
+            result.append(row)
+            
+            # Add separator after each row
+            if is_header:
+                separator = "+" + "+".join(["=" * (width + 2) for width in col_widths]) + "+"
+            else:
+                separator = "+" + "+".join(["-" * (width + 2) for width in col_widths]) + "+"
+            result.append(separator)
+        
+        return "\n".join(result)
 
-        logger.debug(f"Table conversion complete. Has header: {head is not None}")
-        return f"{f"{head}\n" if head else ""}{body}"
+class THeadMD(CustomMarkdown):
+    def to_md(self, inner, symbol, parent):
+        """
+        Convert table rows to a Markdown formatted table.
+        
+        Iterates over each row in the input, converting its cells to Markdown and
+        computing the maximum width for each column. The function then constructs
+        a pipe-delimited table string and appends a separator row composed of dashes.
+        Returns an empty string if no rows are provided.
+        
+        Args:
+            inner: Iterable of row elements, each having a 'children' attribute
+                   with cell elements that implement a to_md() method.
+            symbol: Ignored; provided for interface compatibility.
+            parent: Ignored; provided for interface compatibility.
+        
+        Returns:
+            A Markdown formatted string representing the table.
+        """
+        if not inner:
+            return ""
+            
+        rows = []
+        widths = []
+        
+        # First pass: collect all rows and calculate column widths
+        for row in inner:
+            row_cells = [cell.to_md() for cell in row.children]
+            if not widths:
+                widths = [len(cell) for cell in row_cells]
+            else:
+                widths = [max(old, len(new)) for old, new in zip(widths, row_cells)]
+            rows.append(row_cells)
+        
+        if not rows:
+            return ""
+        
+        # Second pass: generate properly formatted markdown
+        result = []
+        for row_cells in rows:
+            row = "|" + "|".join(row_cells) + "|"
+            result.append(row)
+        
+        # Add separator row
+        separator = "|" + "|".join(["-" * width for width in widths]) + "|"
+        result.append(separator)
+        
+        return "\n".join(result)
 
+class THeadRST(CustomRst):
+    def to_rst(self, inner, symbol, parent):
+        # This is now handled by TableRST
+        """
+        Return an empty string as RST conversion is handled by TableRST.
+        
+        This placeholder method satisfies the interface requirement without performing any
+        direct header conversion, as all RST formatting for headers is managed by the TableRST class.
+        """
+        return ""
 
-class TableRST(CustomRst['Table']):
-    def to_rst(self, inner, symbol, parent, **kwargs):
-        logger.debug("Converting Table element to RST")
-        head = symbol.head.to_rst() if symbol.head else None
-        body = symbol.body.to_rst()
+class TBodyMD(CustomMarkdown):
+    def to_md(self, inner, symbol, parent):
+        """
+        Generate a Markdown string by converting each inner row.
+        
+        This method iterates over the provided inner elements and converts each row to its
+        Markdown representation using the row's to_md() method. The resulting Markdown
+        string is generated by joining the individual row outputs with newline characters.
+        If no inner elements are provided, an empty string is returned.
+        
+        Args:
+            inner: A collection of row elements, each supporting a to_md() conversion.
+            symbol: An element symbol (unused) for interface consistency.
+            parent: The parent element (unused) for context.
+        """
+        if not inner:
+            return ""
+        
+        rows = []
+        for row in inner:
+            rows.append(row.to_md())
+        
+        return "\n".join(rows)
 
-        return f"{f"{head}\n" if head else ""}{body}"
+class TrMD(CustomMarkdown):
+    def to_md(self, inner, symbol, parent):
+        """
+        Converts inner cells to a Markdown table row.
+        
+        Iterates over each element in the provided list, converting it to Markdown and
+        joining the results with pipe characters. The returned string is enclosed
+        with leading and trailing pipes.
+        """
+        cells = [cell.to_md() for cell in inner]
+        return f"|{'|'.join(cells)}|"
 
-class THeadRST(CustomRst['THead']):
-    def to_rst(self, inner, symbol, parent, **kwargs):
-        logger.debug("Converting THead element to RST")
-        logger.debug(f"THead has {len(inner)} children: {[e.to_rst() for e in inner]}")
-        top = [len(max(symbol.table.cols[child.header], key=len).data) for child in symbol.head.children]
-        content = "\n".join([e.to_rst() for e in inner])
-        return f"+-{"-+-".join([t*"-" for t in top])}-+\n{content}\n+={"=+=".join([t*"=" for t in top])}=+"
-    
-class TBodyRST(CustomRst['TBody']):
-    def to_rst(self, inner, symbol, parent, **kwargs):
-        bottom = [len(max(symbol.table.cols[child.header], key=len).data) for child in symbol.table.head.head.children]
-        return f'{f"\n+-{"-+-".join(["-"*b for b in bottom])}-+\n".join([e.to_rst() for e in inner if isinstance(e, Tr)])}\n+-{"-+-".join(["-"*b for b in bottom])}-+'
+class TrRST(CustomRst):
+    def to_rst(self, inner, symbol, parent):
+        # This is now handled by TableRST
+        """
+        Placeholder for table header RST conversion.
+        
+        This method returns an empty string as RST conversion for table headers is handled by TableRST.
+        """
+        return ""
 
-class TrRST(CustomRst['Tr']):
-    def to_rst(self, inner, symbol, parent, **kwargs):
-        return f'| {" |\n| ".join(" | ".join([e.to_rst() for e in inner]).split("\n"))} |'
+class TdMD(CustomMarkdown):
+    def to_md(self, inner, symbol, parent):
+        """
+        Converts inner elements to a Markdown string.
+        
+        Processes each element in the provided iterable by calling its to_md() method and
+        joins the resulting strings using a space separator.
+        
+        Returns:
+            str: The concatenated Markdown representation.
+        """
+        return " ".join([e.to_md() for e in inner])
 
+class TdRST(CustomRst):
+    def to_rst(self, inner: list[Symbol], symbol: Symbol, parent: Symbol) -> str:
+        """Convert inner content to its reStructuredText representation.
+        
+        Returns an empty string if no inner content is provided. If there is exactly one
+        symbol and it is of a text or heading type (Text, H1, H2, H3, H4, H5, H6), its
+        reStructuredText output is returned directly. Otherwise, the method concatenates
+        the reStructuredText outputs of all inner symbols with a space.
+        """
+        if not inner:
+            return ""
+            
+        if len(inner) > 1 or not isinstance(inner[0], (Text, H1, H2, H3, H4, H5, H6)):
+            return " ".join([e.to_rst() for e in inner])  # Fallback to join instead of raising error
+        return inner[0].to_rst()
 
-class TdRST(CustomRst['Td']):
-    def to_rst(self, inner, symbol, parent, **kwargs):
-        content = " ".join([e.to_rst() for e in inner])
-        width = len(max(symbol.table.cols[symbol.header], key=len).data)
-        return content.center(width)
+class ThRST(CustomRst):
+    def to_rst(self, inner, symbol, parent):
+        """
+        Generates a reStructuredText string from inner elements.
+        
+        Iterates over each element in the provided list, calling its `to_rst()` method
+        and joining the results with spaces. The `symbol` and `parent` parameters are
+        present for interface consistency and are not used.
+        """
+        return " ".join([e.to_rst() for e in inner])
 
-class ThRST(CustomRst['Th']):
-    def to_rst(self, inner, symbol, parent, **kwargs):
-        content = " ".join([e.to_rst() for e in inner])
-        width = len(max(symbol.table.cols[symbol.header], key=len).data)
-        if content == "":
-            return "".center(width)
-        return f"**{content}**".center(width)
-
-
+class TBodyRST(CustomRst):
+    def to_rst(self, inner, symbol, parent):
+        # This is now handled by TableRST
+        """
+        Placeholder method for generating reStructuredText for a table header.
+        
+        This method returns an empty string because header processing is handled by TableRST.
+        """
+        return ""
 
 class Table(Symbol):
     html = "table"
     md = TableMD()
     rst = TableRST()
-    head:'THead' = None
-    body:'TBody' = None
-
-    cols: 'dict[Th, list[Td]]' = {}
-    headers: 'list[Th]' = []
-
-    def to_pandas(self):
-        if not self.prepared:
-            self.prepare()
-
-        logger.debug("Converting Table to pandas DataFrame")
-        try:
-            import pandas as pd
-            df = pd.DataFrame([e.to_pandas() for e in self.body.children], columns=self.head.to_pandas())
-            logger.debug(f"Successfully converted table to DataFrame with shape {df.shape}")
-            return df
-        except ImportError:
-            logger.error("pandas not installed - tables extra required")
-            raise ImportError("`tables` extra is required to use `to_pandas`")
-        except Exception as e:
-            logger.error(f"Error converting table to pandas: {str(e)}")
-            raise
-        
-    @classmethod
-    def from_pandas(cls, df:'pd.DataFrame'):
-        logger.debug(f"Creating Table from pandas DataFrame with shape {df.shape}")
-        try:
-            import pandas as pd
-            self = cls()
-            head = THead.from_pandas(list(df.columns))
-            body = TBody.from_pandas(df)
-            
-            self.head = head
-            self.body = body
-            
-            self.add_child(head)
-            self.add_child(body)
-            
-            logger.debug("Successfully created Table from DataFrame")
-            logger.debug(f"Table has {len(self.head.children)} columns and {len(self.body.children)} rows with shape {df.shape}")
-            logger.debug(f"Table head: {self.head.to_pandas()}")
-            logger.debug(f"Table body: {[e.to_list() for e in self.body.children]}")
-            return self
-        except ImportError:
-            logger.error("pandas not installed - tables extra required")
-            raise ImportError("`tables` extra is required to use `from_pandas`")
-        except Exception as e:
-            logger.error(f"Error creating table from pandas: {str(e)}")
-            raise
-    
-    def prepare(self, parent = None, *args, **kwargs):
-        return super().prepare(parent, table=self, *args, **kwargs)
-
-class THead(Symbol):
-    html = "thead"
-    rst = THeadRST()
-    md = THeadMD()
-
-    table:'Table' = None
-    children:'List[Tr]' = List()
-
-    head:'Tr' = None
-
-
-    def to_pandas(self) -> 'list[str]':
-        return self.to_list()
-    
-    def to_list(self) -> 'list[str]':
-        if not self.prepared:
-            self.prepare()
-        
-        return self.children[0].to_list()
-    
-    @classmethod
-    def from_pandas(cls, data:'list[str]'):
-        return cls.from_list(data)
-
-    @classmethod
-    def from_list(cls, data:'list[str]'):
-        self = cls()
-        tr = Tr.from_list(data)
-        self.add_child(tr)
-
-        return self
-    
-    def prepare(self, parent = None, table=None, *args, **kwargs):
-        assert isinstance(table, Table)
-        self.table = table
-        self.table.head = self
-        return super().prepare(parent, table=table, head=True, *args, **kwargs)
-
-class TBody(Symbol):
-    html = "tbody"
-    rst = TBodyRST()
-    md = TBodyMD()
-
-    table:'Table' = None
-    children:'List[Tr]' = List()
-
-    def to_pandas(self):
-        if not self.prepared:
-            self.prepare()
-
-        logger.debug("Converting TBody to pandas format")
-        data = [e.to_pandas() for e in self.children]
-        logger.debug(f"Converted {len(data)} rows from TBody")
-        return data
-    
-    @classmethod
-    def from_pandas(cls, df:'pd.DataFrame'):
-        logger.debug(f"Creating TBody from DataFrame with {len(df)} rows")
-        try:
-            import pandas as pd
-            self = cls()
-            
-            for i, row in df.iterrows():
-                tr = Tr.from_pandas(row)
-                self.children.append(tr)
-                logger.debug(f"Added row {i} to TBody")
-            
-            return self
-        except ImportError:
-            logger.error("pandas not installed - tables extra required")
-            raise ImportError("`tables` extra is required to use `from_pandas`")
-    
-    def prepare(self, parent = None, table=None, *args, **kwargs):
-        assert isinstance(table, Table)
-        self.table = table
-        self.table.body = self
-        return super().prepare(parent, table=table, head=False, *args, **kwargs)
+    nl = True
 
 class Tr(Symbol):
     html = "tr"
     md = TrMD()
     rst = TrRST()
 
-    table:'Table' = None
-
-    children:'List[t.Union[Td, Th]]' = List()
-
-    def __init__(self, styles = {}, classes = [], dom = True, inner = [], **props):
-        super().__init__(styles, classes, dom, inner, **props)
-
-        self.is_header = False
-        if isinstance(self.parent, THead):
-            self.is_header = True
-            logger.debug("Tr element identified as header row")
-
-    def to_pandas(self):
-        if not self.prepared:
-            self.prepare()
-        
-        def get(o, f):
-            return [getattr(v, f) for v in o]
-
-        try:
-            import pandas as pd
-            if self.is_header:
-                raise ValueError("This `Tr` is a header row and cannot be converted to a pandas `Series`")
-            return pd.Series({h.data: v.data for h, v in zip(self.table.head.head.children, self.children)}, index=self.table.head.to_pandas())
-            
-        except ImportError:
-            raise ImportError("`tables` extra is required to use `to_pandas`")
-
-    def to_list(self):
-        if not self.prepared:
-            self.prepare()
-            
-        return [e.data for e in self.children]
-    
-    @classmethod
-    def from_pandas(cls, series:'pd.Series'):
-        try:
-            import pandas as pd
-            self = cls()
-            self.children.clear()
-            for v in series:
-                td = Td(inner=[Text(v)])
-                self.children.append(td)
-
-            return self
-        except ImportError:
-            raise ImportError("`tables` extra is required to use `from_pandas`")
-        
-    @classmethod
-    def from_list(cls, data:'list[str]'):
-        self = cls()
-        for value in data:
-            td = Td(inner=[Text(value)])
-            self.children.append(td)
-
-        return self
-
-    def prepare(self, parent = None, table=None, head=False, *args, **kwargs):
-        assert isinstance(table, Table)
-        self.table = table
-        if head: self.table.head.head = self
-        return super().prepare(parent, table=table, row=self, *args, **kwargs)
-
 class Td(Symbol):
     html = "td"
     md = TdMD()
     rst = TdRST()
 
-    children:'List[Text]' = List()
-    row:'Tr' = None
-
-    @property
-    def data(self):
-        return self.children.get(0, Text("")).text
-
-    @property
-    def width(self):
-        return len(self.data)
-    
-    def prepare(self, parent = None, table=None, row=None, *args, **kwargs):
-        assert isinstance(table, Table)
-        self.table = table
-        self.row = row
-
-        self.header = self.table.headers[self.row.children.index(self)]
-        self.table.cols[self.header].append(self)
-        return super().prepare(parent, table=table, *args, **kwargs)
-    
-    def __len__(self):
-        return len(self.data)
-
 class Th(Symbol):
     html = "th"
-    md = ThMD()
+    md = TdMD()
     rst = ThRST()
 
-    children:'List[Text]' = List()
-    row:'Tr' = None  
-    
-    def __init__(self, styles: dict[str, str] = {}, classes: list[str] = [], dom: bool = True, inner: list[Symbol] = [], **props):
-        super().__init__(styles, classes, dom, inner, **props)
+class THead(Symbol):
+    html = "thead"
+    md = THeadMD()
+    rst = THeadRST()
 
-    @property
-    def data(self):
-        contents = self.children.get(0, Text("")).text
-        logger.debug(f"Th data: {contents}")
-        if contents == "":
-            logger.debug("Th data is empty")
-            return ""
-        logger.debug("Th data is not empty")
-        return f"**{contents}**"
-    
-    @property
-    def width(self):
-        """Width of the data"""
-        if self.data == "":
-            return 0
-        return len(self.data)-4
-
-    def prepare(self, parent = None, table=None, row=None,  *args, **kwargs):
-        assert isinstance(table, Table)
-        self.table = table
-        self.row = row
-        self.header = self
-        self.table.headers.append(self)
-        self.table.cols[self] = [self]
-        return super().prepare(parent, table=table, *args, **kwargs)
-    
-    def __len__(self):
-        """Width of the element (data + bolding)"""
-        return len(self.data)
+class TBody(Symbol):
+    html = "tbody"
+    md = TBodyMD()
+    rst = TBodyRST()

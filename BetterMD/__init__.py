@@ -1,10 +1,28 @@
-import logging
-from .elements import A, H1, H2, H3, H4, H5, H6, Head, OL, UL, LI, Text, Div, P, Span, Img, B, I, Br, Blockquote, Hr, Table, Tr, Td, Th, THead, TBody, Input, Code
-from .html import CustomHTML
-from .markdown import CustomMarkdown
-from .rst import CustomRst
+from .elements import *
+from .parse import Collection, HTMLParser, MDParser, RSTParser
 
+def from_html(html:'str'):
+    """
+    Converts an HTML string to a Symbol object.
+    
+    This function processes the provided HTML content by calling the Symbol.from_html method and returns the resulting Symbol.
+    
+    Args:
+        html: The HTML content to convert.
+    
+    Returns:
+        The Symbol object corresponding to the input HTML.
+    """
+    return Symbol.from_html(html)
 
-def enable_debug_mode():
-    logging.basicConfig(level=logging.DEBUG)
-    logger = logging.getLogger("BetterMD")
+def from_md(md:'str'):
+    """
+    Converts a Markdown string into a Symbol instance.
+    
+    This function processes a Markdown-formatted string by invoking the
+    Symbol.from_md method to generate a corresponding Symbol object.
+    
+    Args:
+        md (str): The Markdown content to be converted.
+    """
+    return Symbol.from_md(md)
